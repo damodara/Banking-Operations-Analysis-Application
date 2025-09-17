@@ -34,6 +34,28 @@ def process_transactions(path: str):
     return grouped_data
 
 
+def build_cards(path: str) -> List[Dict]:
+    """
+    Возвращает список словарей по всем картам с полями last_digits, total_spent, cashback.
+    :param path: путь к XLSX с операциями
+    :return: List[Dict]
+    """
+    df_grouped = process_transactions(path)
+    cards = []
+    if not df_grouped.empty:
+        for _, row in df_grouped.iterrows():
+            card_number = str(row.get("Номер карты", ""))
+            total_raw = float(row.get("Сумма_операций", 0.0))
+            cashback_raw = row.get("Кешбек", 0.0)
+            cashback_val = float(cashback_raw) if pd.notna(cashback_raw) else 0.0
+            cards.append({
+                "last_digits": card_number[-4:] if card_number else "",
+                "total_spent": round(abs(total_raw), 2),
+                "cashback": round(cashback_val, 2)
+            })
+    return cards
+
+
 def load_user_settings(path: str):
     """
     Загружает пользовательские настройки из JSON файла.
