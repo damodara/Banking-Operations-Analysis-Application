@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 def greetings(time_string):
     """
@@ -6,18 +7,21 @@ def greetings(time_string):
     :return: Строка с приветствием
     """
     try:
+        welcome_msg = ""
         parsed_time = datetime.strptime(time_string, "%Y-%m-%d %H:%M:%S")
         hour = parsed_time.hour
         if 5 <= hour < 12:
-            return "Доброе утро"
+            welcome_msg = "Доброе утро"
         elif 12 <= hour < 18:
-            return "Добрый день"
+            welcome_msg = "Добрый день"
         elif 18 <= hour < 23:
-            return "Добрый вечер"
+            welcome_msg = "Добрый вечер"
         else:
-            return "Доброй ночи"
+            welcome_msg = "Доброй ночи"
     except ValueError:
-        return "Неверный формат времени"
+        welcome_msg = "Неверный формат времени"
+
+    return welcome_msg
 
 
 if __name__ == "__main__": # pragma: no cover
