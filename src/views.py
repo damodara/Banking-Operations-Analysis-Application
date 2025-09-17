@@ -1,6 +1,8 @@
 import json
 from datetime import datetime
-def greetings(time_string):
+
+
+def greetings(time_string: str) -> str:
     """
     Сообщение приветствия на основе полученного времени
     :param time_string: Дата в формате datetime, а именно YYYY-MM-DD HH:MM:SS
@@ -24,5 +26,5 @@ def greetings(time_string):
     return welcome_msg
 
 
-if __name__ == "__main__": # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover
     print(greetings("2025-09-21 04:59:01"))

@@ -1,14 +1,29 @@
 import json
 
-from config import PATH_TO_OPERATIONS
-from src.utils import build_cards
+from config import PATH_TO_OPERATIONS, PATH_TO_USER_SETTINGS
+from src.utils import (
+    build_cards,
+    get_currency_rates,
+    get_stock_prices,
+    load_user_settings,
+    top_transactions_by_payment,
+)
 from src.views import greetings
-#приветствие
-greeting_msg = greetings("2025-09-21 04:59:01")
-cards = build_cards(PATH_TO_OPERATIONS)
-json_msg = json.dumps({
-    'greeting': greeting_msg,
-    'cards': cards
-}, ensure_ascii=False, indent=4)
 
-print(json_msg)
+# Приветствие
+greeting_msg = greetings("2025-09-21 04:59:01")
+# настройки пользователя
+user_settings = load_user_settings(PATH_TO_USER_SETTINGS)
+user_currencies = user_settings[0].get("user_currencies") if user_settings else ["USD", "EUR"]
+user_stocks = user_settings[0].get("user_stocks") if user_settings else ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"]
+# Групировка карт и транзакций
+cards = build_cards(PATH_TO_OPERATIONS)
+result = {
+    "greeting": greeting_msg,
+    "cards": cards,
+    "top_transactions": top_transactions_by_payment(PATH_TO_OPERATIONS, n=5),
+    "currency_rates": get_currency_rates(user_currencies),
+    "stock_prices": get_stock_prices(user_stocks),
+}
+
+print(json.dumps(result, ensure_ascii=False, indent=4))

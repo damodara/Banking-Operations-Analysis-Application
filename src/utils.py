@@ -1,14 +1,17 @@
-from typing import List, Dict
-
-import pandas as pd
 import json
-import requests
 import os
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List
+
+import pandas as pd
+import requests
+from dotenv import load_dotenv
 
 from config import PATH_TO_OPERATIONS, PATH_TO_USER_SETTINGS
 
-def load_transactions_data(path: str) -> pd.DataFrame:
+
+def load_transactions_data(path: Path) -> pd.DataFrame:
     """
     Читает XLS/XLSX.
     :param path: Указываем путь и название файла
@@ -24,17 +27,24 @@ def load_transactions_data(path: str) -> pd.DataFrame:
     return df
 
 
-def process_transactions(path: str):
+def process_transactions(path: str) -> pd.DataFrame:
+    """
+    Возвращает данные о транзакциях по картам.
+    :param path: путь к XLSX с операциями
+    :return: pd.DataFrame
+    """
     df = load_transactions_data(path)
+    if df.empty or "Номер карты" not in df.columns:
+        return pd.DataFrame(columns=["Номер карты", "Сумма_операций", "Кешбек"])
+
     df["Номер карты"] = df["Номер карты"].astype(str)
-    grouped_data = df.groupby("Номер карты").agg(
-        Сумма_операций=("Сумма операции", "sum"),
-        Кешбек=("Кэшбэк", "sum")
-    ).reset_index()
+    grouped_data = (
+        df.groupby("Номер карты").agg(Сумма_операций=("Сумма операции", "sum"), Кешбек=("Кэшбэк", "sum")).reset_index()
+    )
     return grouped_data
 
 
-def build_cards(path: str) -> List[Dict]:
+def build_cards(path: Path) -> List[Dict]:
     """
     Возвращает список словарей по всем картам с полями last_digits, total_spent, cashback.
     :param path: путь к XLSX с операциями
@@ -48,26 +58,121 @@ def build_cards(path: str) -> List[Dict]:
             total_raw = float(row.get("Сумма_операций", 0.0))
             cashback_raw = row.get("Кешбек", 0.0)
             cashback_val = float(cashback_raw) if pd.notna(cashback_raw) else 0.0
-            cards.append({
-                "last_digits": card_number[-4:] if card_number else "",
-                "total_spent": round(abs(total_raw), 2),
-                "cashback": round(cashback_val, 2)
-            })
+            cards.append(
+                {
+                    "last_digits": card_number[-4:] if card_number else "",
+                    "total_spent": round(abs(total_raw), 2),
+                    "cashback": round(cashback_val, 2),
+                }
+            )
     return cards
 
 
-def load_user_settings(path: str):
+def top_transactions_by_payment(path: Path, n: int = 5) -> List[Dict]:
+    """
+    Возвращает топ-n транзакций по абсолютному значению поля "Сумма платежа".
+    :param path: путь к XLSX с операциями
+    :param n: количество транзакций
+    :return: List[Dict]
+    """
+    df = load_transactions_data(path)
+    if df.empty or "Сумма платежа" not in df.columns:
+        return []
+
+    df["Сумма платежа"] = pd.to_numeric(df.get("Сумма платежа"), errors="coerce")
+    df["Валюта платежа"] = df.get("Валюта платежа")
+    df["Номер карты"] = df.get("Номер карты").astype(str) if df.get("Номер карты") is not None else ""
+    df["Дата платежа"] = df.get("Дата платежа")
+
+    df = df.dropna(subset=["Сумма платежа"])
+    if df.empty:
+        return []
+
+    df_sorted = df.reindex(df["Сумма платежа"].abs().sort_values(ascending=False).index)
+    top = df_sorted.head(n)
+
+    results: List[Dict] = []
+    for _, row in top.iterrows():
+        raw_date = row.get("Дата платежа", "")
+        date_str = raw_date.strftime("%d.%m.%Y") if isinstance(raw_date, datetime) else str(raw_date)
+        amount = float(row.get("Сумма платежа", 0.0))
+        results.append(
+            {
+                "date": date_str,
+                "amount": round(amount, 2),
+                "category": row.get("Категория", ""),
+                "description": row.get("Описание", ""),
+            }
+        )
+
+    return results
+
+
+def get_currency_rates(
+    currencies: List[str], to_currency: str = "RUB", use_static_fallback: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    Возвращает курсы указанных валют к валюте `to_currency` через apilayer.
+    Делает один запрос к /latest и вычисляет кросс-курс (устойчиво к free-тарифу с фиксированной базой EUR).
+    """
+    load_dotenv()
+    api_token = os.getenv("API_KEY")
+
+    def _compute_rates_from_map(rates_map: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Вычисляет курсы указанных валют к валюте `to_currency` через apilayer.
+        """
+        results_local: List[Dict[str, Any]] = []
+        to_val = rates_map.get(to_currency)
+        to_num = float(to_val) if to_val is not None else None
+        for cur in currencies:
+            cur_val = rates_map.get(cur)
+            if to_num is None or cur_val is None:
+                results_local.append({"currency": cur, "rate": None})
+                continue
+            cur_num = float(cur_val)
+            rate_val = to_num / cur_num if cur_num != 0 else None
+            results_local.append({"currency": cur, "rate": round(rate_val, 2) if rate_val is not None else None})
+        return results_local
+
+    symbols_set = set([to_currency] + currencies)
+    symbols = ",".join(sorted(symbols_set))
+
+    if api_token:
+        headers = {"apikey": api_token}
+        try:
+            url = f"https://api.apilayer.com/exchangerates_data/latest?symbols={symbols}"
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            rates_map = data.get("rates", {}) or {}
+            results = _compute_rates_from_map(rates_map)
+            if any(item["rate"] is not None for item in results):
+                return results
+        except Exception:
+            pass
+
+    # Если нет API_KEY или запрос не удался, используем статический фолбэк
+    if use_static_fallback:
+        static_rates: Dict[str, float] = {"USD": 73.21, "EUR": 87.08}
+        result_static: List[Dict[str, Any]] = []
+        for cur in currencies:
+            rate_val = static_rates.get(cur)
+            result_static.append({"currency": cur, "rate": round(rate_val, 2) if rate_val is not None else None})
+        return result_static
+
+    return [{"currency": cur, "rate": None} for cur in currencies]
+
+
+def load_user_settings(path: Path) -> List[str]:
     """
     Загружает пользовательские настройки из JSON файла.
-    
-    Returns:
-        Dict[str, Any]: Словарь с настройками пользователя
+    :returns: Dict[str, Any]: Словарь с настройками пользователя
     """
     try:
         with open(path, encoding="utf-8") as file:
             data = json.load(file)
 
-        # Проверяем, что файл содержит именно список объектов
         if isinstance(data, list):
             return data
         else:
@@ -77,20 +182,36 @@ def load_user_settings(path: str):
     except json.JSONDecodeError as e:
         return []
 
-def get_currency_rates(currencies):
-    """Получает курсы валют через API"""
-    # Ваш код здесь
 
-def get_stock_prices(stocks):
-    """Получает цены акций через API"""
-    # Ваш код здесь
+def get_stock_prices(tickers: List[str]) -> List[Dict[str, Any]]:
+    """
+    Возвращает текущие цены акций для заданных тикеров.
+    Источник: stooq
+    """
+    try:
+        if tickers:
+            stooq_symbols = ",".join([f"{t.lower()}.us" for t in tickers])
+            url = f"https://stooq.com/q/l/?s={stooq_symbols}&f=sd2t2ohlcv&h&e=csv"
+            df = pd.read_csv(url)
+            results: List[Dict[str, Any]] = []
+            for t in tickers:
+                row = df[df["Symbol"].str.lower().eq(f"{t.lower()}.us")]
+                price = None
+                if not row.empty and "Close" in row.columns:
+                    try:
+                        price = float(row.iloc[0]["Close"]) if pd.notna(row.iloc[0]["Close"]) else None
+                    except Exception:
+                        price = None
+                results.append({"stock": t, "price": round(price, 2) if price is not None else None})
+            if any(item["price"] is not None for item in results):
+                return results
+    except Exception:
+        pass
 
-def filter_by_date_range(transactions, start_date, end_date):
-    """Фильтрует транзакции по датам"""
-    # Ваш код здесь
+    return [{"stock": t, "price": None} for t in tickers]
 
 
-if __name__ == "__main__": # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover
     print(load_transactions_data(PATH_TO_OPERATIONS))
     print("____")
     print(load_user_settings(PATH_TO_USER_SETTINGS))
