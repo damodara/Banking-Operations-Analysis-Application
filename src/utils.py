@@ -27,14 +27,33 @@ def load_transactions_data(path: Path) -> pd.DataFrame:
     return df
 
 
-def process_transactions(path: str) -> pd.DataFrame:
+def process_transactions(path: str, target_month: int = None, target_year: int = None) -> pd.DataFrame:
     """
-    Возвращает данные о транзакциях по картам.
+    Возвращает данные о транзакциях по картам за указанный месяц.
     :param path: путь к XLSX с операциями
+    :param target_month: номер месяца (1-12), если None - текущий месяц
+    :param target_year: год, если None - текущий год
     :return: pd.DataFrame
     """
     df = load_transactions_data(path)
     if df.empty or "Номер карты" not in df.columns:
+        return pd.DataFrame(columns=["Номер карты", "Сумма_операций", "Кешбек"])
+
+    # Определяем месяц и год для фильтрации
+    if target_month is None or target_year is None:
+        current_date = datetime.now()
+        target_month = target_month or current_date.month
+        target_year = target_year or current_date.year
+    
+    if "Дата операции" in df.columns:
+        df["Дата операции"] = pd.to_datetime(df["Дата операции"], dayfirst=True, errors="coerce")
+        df = df.dropna(subset=["Дата операции"])
+        df = df[
+            (df["Дата операции"].dt.year == target_year) & 
+            (df["Дата операции"].dt.month == target_month)
+        ]
+    
+    if df.empty:
         return pd.DataFrame(columns=["Номер карты", "Сумма_операций", "Кешбек"])
 
     df["Номер карты"] = df["Номер карты"].astype(str)
@@ -44,13 +63,15 @@ def process_transactions(path: str) -> pd.DataFrame:
     return grouped_data
 
 
-def build_cards(path: Path) -> List[Dict]:
+def build_cards(path: str, target_month: int = None, target_year: int = None) -> List[Dict]:
     """
     Возвращает список словарей по всем картам с полями last_digits, total_spent, cashback.
     :param path: путь к XLSX с операциями
+    :param target_month: номер месяца (1-12), если None - текущий месяц
+    :param target_year: год, если None - текущий год
     :return: List[Dict]
     """
-    df_grouped = process_transactions(path)
+    df_grouped = process_transactions(path, target_month, target_year)
     cards = []
     if not df_grouped.empty:
         for _, row in df_grouped.iterrows():
@@ -68,15 +89,34 @@ def build_cards(path: Path) -> List[Dict]:
     return cards
 
 
-def top_transactions_by_payment(path: Path, n: int = 5) -> List[Dict]:
+def top_transactions_by_payment(path: str, n: int = 5, target_month: int = None, target_year: int = None) -> List[Dict]:
     """
-    Возвращает топ-n транзакций по абсолютному значению поля "Сумма платежа".
+    Возвращает топ-n транзакций по абсолютному значению поля "Сумма платежа" за указанный месяц.
     :param path: путь к XLSX с операциями
     :param n: количество транзакций
+    :param target_month: номер месяца (1-12), если None - текущий месяц
+    :param target_year: год, если None - текущий год
     :return: List[Dict]
     """
     df = load_transactions_data(path)
     if df.empty or "Сумма платежа" not in df.columns:
+        return []
+
+    # Определяем месяц и год для фильтрации
+    if target_month is None or target_year is None:
+        current_date = datetime.now()
+        target_month = target_month or current_date.month
+        target_year = target_year or current_date.year
+    
+    if "Дата операции" in df.columns:
+        df["Дата операции"] = pd.to_datetime(df["Дата операции"], dayfirst=True, errors="coerce")
+        df = df.dropna(subset=["Дата операции"])
+        df = df[
+            (df["Дата операции"].dt.year == target_year) & 
+            (df["Дата операции"].dt.month == target_month)
+        ]
+    
+    if df.empty:
         return []
 
     df["Сумма платежа"] = pd.to_numeric(df.get("Сумма платежа"), errors="coerce")

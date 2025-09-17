@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+from datetime import datetime
 
 import pandas as pd
 import pytest
@@ -20,8 +21,34 @@ def test_build_cards_structure() -> None:
         assert isinstance(sample["cashback"], float)
 
 
+def test_build_cards_with_month() -> None:
+    """Тест build_cards с указанным месяцем"""
+    cards = u.build_cards(str(PATH_TO_OPERATIONS), target_month=9, target_year=2025)
+    assert isinstance(cards, list)
+    # Проверяем структуру карт
+    if cards:
+        sample = cards[0]
+        assert set(["last_digits", "total_spent", "cashback"]).issubset(sample.keys())
+        assert isinstance(sample["last_digits"], str)
+        assert isinstance(sample["total_spent"], float)
+        assert isinstance(sample["cashback"], float)
+
+
 def test_top_transactions_by_payment_order_and_shape() -> None:
     top = u.top_transactions_by_payment(str(PATH_TO_OPERATIONS), n=5)
+    assert isinstance(top, list)
+    assert len(top) <= 5
+
+    for item in top:
+        assert set(["date", "amount", "category", "description"]).issubset(item.keys())
+
+    amounts_abs = [abs(x["amount"]) for x in top]
+    assert amounts_abs == sorted(amounts_abs, reverse=True)
+
+
+def test_top_transactions_with_month() -> None:
+    """Тест top_transactions_by_payment с указанным месяцем"""
+    top = u.top_transactions_by_payment(str(PATH_TO_OPERATIONS), n=5, target_month=9, target_year=2025)
     assert isinstance(top, list)
     assert len(top) <= 5
 
@@ -256,5 +283,71 @@ def test_process_transactions_missing_columns() -> None:
         assert result.empty
         expected_cols = ["Номер карты", "Сумма_операций", "Кешбек"]
         assert list(result.columns) == expected_cols
+    finally:
+        os.unlink(temp_path)
+
+
+def test_process_transactions_month_filter():
+    """Тест фильтрации process_transactions по указанному месяцу"""
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        # Создаем данные с разными месяцами
+        target_date = datetime(2025, 9, 15)  # сентябрь 2025
+        other_date = datetime(2025, 8, 15)   # август 2025
+        
+        data = {
+            "Дата операции": [
+                target_date.strftime("%d.%m.%Y %H:%M:%S"),  # целевой месяц
+                other_date.strftime("%d.%m.%Y %H:%M:%S"),   # другой месяц
+                target_date.strftime("%d.%m.%Y %H:%M:%S"),  # целевой месяц
+            ],
+            "Номер карты": ["*7197", "*5091", "*7197"],
+            "Сумма операции": [-100.0, -200.0, -150.0],
+            "Кэшбэк": [1.0, 2.0, 1.5]
+        }
+        df = pd.DataFrame(data)
+        df.to_excel(f.name, index=False)
+        temp_path = f.name
+    
+    try:
+        result = u.process_transactions(temp_path, target_month=9, target_year=2025)
+        # Должны остаться только транзакции целевого месяца
+        assert not result.empty
+        # Проверяем, что есть только карта *7197 (2 транзакции целевого месяца)
+        assert len(result) == 1
+        assert result.iloc[0]["Номер карты"] == "*7197"
+        assert result.iloc[0]["Сумма_операций"] == -250.0  # -100 + -150
+        assert result.iloc[0]["Кешбек"] == 2.5  # 1.0 + 1.5
+    finally:
+        os.unlink(temp_path)
+
+
+def test_top_transactions_month_filter():
+    """Тест фильтрации top_transactions по указанному месяцу"""
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        # Создаем данные с разными месяцами
+        target_date = datetime(2025, 9, 15)  # сентябрь 2025
+        other_date = datetime(2025, 8, 15)   # август 2025
+        
+        data = {
+            "Дата операции": [
+                target_date.strftime("%d.%m.%Y %H:%M:%S"),  # целевой месяц
+                other_date.strftime("%d.%m.%Y %H:%M:%S"),   # другой месяц
+                target_date.strftime("%d.%m.%Y %H:%M:%S"),  # целевой месяц
+            ],
+            "Сумма платежа": [1000.0, 2000.0, 500.0],
+            "Категория": ["Целевой", "Другой", "Целевой"],
+            "Описание": ["Оп1", "Оп2", "Оп3"]
+        }
+        df = pd.DataFrame(data)
+        df.to_excel(f.name, index=False)
+        temp_path = f.name
+    
+    try:
+        result = u.top_transactions_by_payment(temp_path, n=5, target_month=9, target_year=2025)
+        # Должны остаться только транзакции целевого месяца
+        assert len(result) == 2  # только 2 транзакции целевого месяца
+        # Проверяем, что самая крупная транзакция - 1000.0 (целевой месяц)
+        assert result[0]["amount"] == 1000.0
+        assert result[1]["amount"] == 500.0
     finally:
         os.unlink(temp_path)
