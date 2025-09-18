@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,11 @@ from dotenv import load_dotenv
 
 from config import PATH_TO_OPERATIONS, PATH_TO_USER_SETTINGS
 
+# Логирование модуля utils
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
+
 
 def load_transactions_data(path: Path) -> pd.DataFrame:
     """
@@ -17,11 +23,14 @@ def load_transactions_data(path: Path) -> pd.DataFrame:
     :param path: Указываем путь и название файла
     :return: Функция возвращает список словарей (records).
     """
+    logger.info("Чтение XLSX: %s", path)
     try:
         df = pd.read_excel(path)
     except FileNotFoundError as e:
+        logger.error("Файл не найден: %s", path)
         raise FileNotFoundError(f"XLSX-файл не найден: {path}") from e
     except Exception as e:
+        logger.exception("Ошибка чтения XLS/XLSX: %s", path)
         raise RuntimeError(f"Ошибка чтения XLS/XLSX: {path}") from e
 
     return df
@@ -35,6 +44,7 @@ def process_transactions(path: str, target_month: int = None, target_year: int =
     :param target_year: год, если None - текущий год
     :return: pd.DataFrame
     """
+    logger.info("Обработка транзакций (группировка по картам) для файла: %s", path)
     df = load_transactions_data(path)
     if df.empty or "Номер карты" not in df.columns:
         return pd.DataFrame(columns=["Номер карты", "Сумма_операций", "Кешбек"])
@@ -44,15 +54,14 @@ def process_transactions(path: str, target_month: int = None, target_year: int =
         current_date = datetime.now()
         target_month = target_month or current_date.month
         target_year = target_year or current_date.year
-    
+
     if "Дата операции" in df.columns:
         df["Дата операции"] = pd.to_datetime(df["Дата операции"], dayfirst=True, errors="coerce")
         df = df.dropna(subset=["Дата операции"])
-        df = df[
-            (df["Дата операции"].dt.year == target_year) & 
-            (df["Дата операции"].dt.month == target_month)
-        ]
-    
+        df = df[(df["Дата операции"].dt.year == target_year) & (df["Дата операции"].dt.month == target_month)]
+        logger.info("Топ-платежи: фильтрация по %02d.%04d -> %d строк", target_month, target_year, len(df))
+        logger.info("Фильтрация по периоду %02d.%04d -> %d строк", target_month, target_year, len(df))
+
     if df.empty:
         return pd.DataFrame(columns=["Номер карты", "Сумма_операций", "Кешбек"])
 
@@ -89,7 +98,9 @@ def build_cards(path: str, target_month: int = None, target_year: int = None) ->
     return cards
 
 
-def top_transactions_by_payment(path: str, n: int = 5, target_month: int = None, target_year: int = None) -> List[Dict]:
+def top_transactions_by_payment(
+    path: str, n: int = 5, target_month: int = None, target_year: int = None
+) -> List[Dict]:
     """
     Возвращает топ-n транзакций по абсолютному значению поля "Сумма платежа" за указанный месяц.
     :param path: путь к XLSX с операциями
@@ -107,15 +118,12 @@ def top_transactions_by_payment(path: str, n: int = 5, target_month: int = None,
         current_date = datetime.now()
         target_month = target_month or current_date.month
         target_year = target_year or current_date.year
-    
+
     if "Дата операции" in df.columns:
         df["Дата операции"] = pd.to_datetime(df["Дата операции"], dayfirst=True, errors="coerce")
         df = df.dropna(subset=["Дата операции"])
-        df = df[
-            (df["Дата операции"].dt.year == target_year) & 
-            (df["Дата операции"].dt.month == target_month)
-        ]
-    
+        df = df[(df["Дата операции"].dt.year == target_year) & (df["Дата операции"].dt.month == target_month)]
+
     if df.empty:
         return []
 
@@ -155,6 +163,7 @@ def get_currency_rates(
     Возвращает курсы указанных валют к валюте `to_currency` через apilayer.
     Делает один запрос к /latest и вычисляет кросс-курс (устойчиво к free-тарифу с фиксированной базой EUR).
     """
+    logger.info("Получение курсов валют для: %s -> %s", ",".join(currencies), to_currency)
     load_dotenv()
     api_token = os.getenv("API_KEY")
 
@@ -188,9 +197,10 @@ def get_currency_rates(
             rates_map = data.get("rates", {}) or {}
             results = _compute_rates_from_map(rates_map)
             if any(item["rate"] is not None for item in results):
+                logger.info("Курсы получены от apilayer")
                 return results
         except Exception:
-            pass
+            logger.warning("Ошибка получения курсов от apilayer, используем фолбэк", exc_info=True)
 
     # Если нет API_KEY или запрос не удался, используем статический фолбэк
     if use_static_fallback:
@@ -199,6 +209,7 @@ def get_currency_rates(
         for cur in currencies:
             rate_val = static_rates.get(cur)
             result_static.append({"currency": cur, "rate": round(rate_val, 2) if rate_val is not None else None})
+        logger.info("Возврат статических курсов (фолбэк)")
         return result_static
 
     return [{"currency": cur, "rate": None} for cur in currencies]
@@ -209,6 +220,7 @@ def load_user_settings(path: Path) -> List[str]:
     Загружает пользовательские настройки из JSON файла.
     :returns: Dict[str, Any]: Словарь с настройками пользователя
     """
+    logger.info("Загрузка пользовательских настроек: %s", path)
     try:
         with open(path, encoding="utf-8") as file:
             data = json.load(file)
@@ -218,8 +230,10 @@ def load_user_settings(path: Path) -> List[str]:
         else:
             return []
     except FileNotFoundError:
+        logger.warning("Файл настроек не найден: %s", path)
         return []
     except json.JSONDecodeError as e:
+        logger.warning("Ошибка JSON в файле настроек: %s", path)
         return []
 
 
@@ -228,6 +242,7 @@ def get_stock_prices(tickers: List[str]) -> List[Dict[str, Any]]:
     Возвращает текущие цены акций для заданных тикеров.
     Источник: stooq
     """
+    logger.info("Получение цен акций: %s (stooq)", ",".join(tickers))
     try:
         if tickers:
             stooq_symbols = ",".join([f"{t.lower()}.us" for t in tickers])
@@ -244,9 +259,10 @@ def get_stock_prices(tickers: List[str]) -> List[Dict[str, Any]]:
                         price = None
                 results.append({"stock": t, "price": round(price, 2) if price is not None else None})
             if any(item["price"] is not None for item in results):
+                logger.info("Цены акций получены от stooq")
                 return results
     except Exception:
-        pass
+        logger.warning("Ошибка получения цен акций, возвращаю None", exc_info=True)
 
     return [{"stock": t, "price": None} for t in tickers]
 

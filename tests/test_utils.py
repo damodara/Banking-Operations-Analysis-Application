@@ -287,27 +287,27 @@ def test_process_transactions_missing_columns() -> None:
         os.unlink(temp_path)
 
 
-def test_process_transactions_month_filter():
+def test_process_transactions_month_filter() -> None:
     """Тест фильтрации process_transactions по указанному месяцу"""
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
         # Создаем данные с разными месяцами
         target_date = datetime(2025, 9, 15)  # сентябрь 2025
-        other_date = datetime(2025, 8, 15)   # август 2025
-        
+        other_date = datetime(2025, 8, 15)  # август 2025
+
         data = {
             "Дата операции": [
                 target_date.strftime("%d.%m.%Y %H:%M:%S"),  # целевой месяц
-                other_date.strftime("%d.%m.%Y %H:%M:%S"),   # другой месяц
+                other_date.strftime("%d.%m.%Y %H:%M:%S"),  # другой месяц
                 target_date.strftime("%d.%m.%Y %H:%M:%S"),  # целевой месяц
             ],
             "Номер карты": ["*7197", "*5091", "*7197"],
             "Сумма операции": [-100.0, -200.0, -150.0],
-            "Кэшбэк": [1.0, 2.0, 1.5]
+            "Кэшбэк": [1.0, 2.0, 1.5],
         }
         df = pd.DataFrame(data)
         df.to_excel(f.name, index=False)
         temp_path = f.name
-    
+
     try:
         result = u.process_transactions(temp_path, target_month=9, target_year=2025)
         # Должны остаться только транзакции целевого месяца
@@ -321,27 +321,27 @@ def test_process_transactions_month_filter():
         os.unlink(temp_path)
 
 
-def test_top_transactions_month_filter():
+def test_top_transactions_month_filter() -> None:
     """Тест фильтрации top_transactions по указанному месяцу"""
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
         # Создаем данные с разными месяцами
         target_date = datetime(2025, 9, 15)  # сентябрь 2025
-        other_date = datetime(2025, 8, 15)   # август 2025
-        
+        other_date = datetime(2025, 8, 15)  # август 2025
+
         data = {
             "Дата операции": [
                 target_date.strftime("%d.%m.%Y %H:%M:%S"),  # целевой месяц
-                other_date.strftime("%d.%m.%Y %H:%M:%S"),   # другой месяц
+                other_date.strftime("%d.%m.%Y %H:%M:%S"),  # другой месяц
                 target_date.strftime("%d.%m.%Y %H:%M:%S"),  # целевой месяц
             ],
             "Сумма платежа": [1000.0, 2000.0, 500.0],
             "Категория": ["Целевой", "Другой", "Целевой"],
-            "Описание": ["Оп1", "Оп2", "Оп3"]
+            "Описание": ["Оп1", "Оп2", "Оп3"],
         }
         df = pd.DataFrame(data)
         df.to_excel(f.name, index=False)
         temp_path = f.name
-    
+
     try:
         result = u.top_transactions_by_payment(temp_path, n=5, target_month=9, target_year=2025)
         # Должны остаться только транзакции целевого месяца
